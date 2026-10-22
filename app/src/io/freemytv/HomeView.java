@@ -1,6 +1,8 @@
 package io.freemytv;
 
 import android.accessibilityservice.AccessibilityServiceInfo;
+import java.io.InputStream;
+import android.graphics.BitmapFactory;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -193,7 +195,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private long heroFadeAt, bgFadeAt;
     private final Spring heroFocus = new Spring(0.28f, 0.85f, 0);
     private final RectF heroButton = new RectF();
-    private Backdrop bgFrom, bgTo;     // null = gradient (no photo)
+    private Backdrop bgFrom, bgTo;
+    private Bitmap defaultAerial;     // null = gradient (no photo)
     private final int[] frostMix = new int[Backdrop.FW * Backdrop.FH];
 
     // Bottom drawer
@@ -369,7 +372,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
-        setContentDescription("Free My TV");
+        setContentDescription("Ad-Free TV Exp");
         drawerLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < 6; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
@@ -585,6 +588,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lWeather = Ui.text(Ui.medium, 34 * k, L_DIM);
         lClockQuote = Ui.numbers(Ui.medium, 28 * k, L_DIM);
         lightGradient = null;
+        nightGradient = null;
         buttonPaint = Ui.text(Ui.semibold, 29 * k, INK);
         capsuleText = Ui.numbers(Ui.medium, 29 * k, 0xF2FFFFFF);
         tipPaint = Ui.text(Ui.semibold, 25 * k, 0xF2FFFFFF);
@@ -1200,6 +1204,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fade <= 0.01f) return;
         int textColor = text.getColor();
         text.setColor(Ui.alpha(textColor, fade));
+
+        if (clock) {
+            HomeData.IndianMarket m = data.market;
+            float x = MARGIN * k;
+            float base1 = L_QUOTES_BASE * k;
+            float base2 = base1 + 32 * k;
+
+            text.setShadowLayer(14 * k, 0, 2 * k, 0xEE000000);
+            // Line 1: NIFTY 50 & Tata Stocks
+            String line1 = "NIFTY 50  " + m.nifty + "   ·   TATA MOTORS: CV  " + m.tmCv + "  ·  PV  " + m.tmPv + "   ·   TATA GOLD  " + m.tataGold;
+            c.drawText(line1, x, base1, text);
+
+            // Line 2: Kolkata Gold (24K & 22K per gram & 10g)
+            String line2 = "KOLKATA GOLD  24K: " + m.gold24kGram + "/g (" + m.gold24k + "/10g)   ·   22K: " + m.gold22kGram + "/g (" + m.gold22k + "/10g)";
+            c.drawText(line2, x, base2, text);
+            text.clearShadowLayer();
+
+            text.setColor(textColor);
+            return;
+        }
         int n = HomeData.coinCount();
         if (n == 0) { text.setColor(textColor); return; }
         // Measured once per set of prices: this row is redrawn on every frame of the cards' focus animation, and
@@ -1446,7 +1470,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             x += tw + gap;
         }
         float cardsTop = CARDS_TOP * k, split = left + (right - left) * 0.585f;
-        boolean wx = Prefs.weather(), qt = Prefs.quotes() && HomeData.active().length > 0;
+        boolean wx = Prefs.weather(), qt = true;
         // A card that is off gives its room to the other one.
         weatherCard.set(left, cardsTop, qt ? split - 16 * k : right, cardsTop + CARDS_H * k);
         quotesCard.set(wx ? split + 16 * k : left, cardsTop, right, cardsTop + CARDS_H * k);
@@ -1512,7 +1536,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < drawerItems.size(); i++) if (i != top) drawDrawerTile(c, i);
         if (top >= 0) drawDrawerTile(c, top);
         if (Prefs.weather()) drawWeatherCard(c, weatherCard);
-        if (Prefs.quotes() && HomeData.active().length > 0) drawQuotesCard(c, quotesCard);
+        drawQuotesCard(c, quotesCard);
     }
 
     /** Square drawer button: symbol and name; an input with no device is dimmed. Focused: white, with dark text. */
@@ -1669,29 +1693,54 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Snapshot weatherSnapshot = new Snapshot(), quotesSnapshot = new Snapshot();
 
     private void drawPrices(Canvas c, RectF r) {
-        float x = r.left + 34 * k, right = r.right - 34 * k;
-        refreshDrawerText();
-        c.drawText(Ui.tr("Crypto"), x, r.top + 54 * k, cardTitle);
-        c.drawText(staleText, right, r.top + 54 * k, cardDimRight);
-        float cap = Ui.cap(cardText);
-        int[] coins = HomeData.active();
-        for (int j = 0; j < coins.length; j++) {
-            int i = coins[j];
-            float base = r.top + (110 + 52 * j) * k, mid = base - cap / 2;
-            float gw = Glyphs.width(getContext(), HomeData.COINS[i], cap);
-            Glyphs.coin(getContext(), c, HomeData.COINS[i], x + 14 * k, mid, cap, tone(L_DIM, 0xCCFFFFFF));
-            c.drawText(HomeData.coinName(i), x + Math.max(gw, 28 * k) / 2 + 30 * k, base, cardText);
-            c.drawText(priceText[i], right - 128 * k, base, pricePaint);
-            double change = data.changes[i];
-            if (Double.isNaN(change)) continue;
-            int color = change >= 0 ? tone(0xFF248A3D, UP_COLOR) : tone(0xFFD70015, DOWN_COLOR);
-            tmp.set(right - 108 * k, mid - 17 * k, right, mid + 17 * k);
-            fill.setShader(null);
-            fill.setColor(Ui.alpha(color, 0.2f));
-            c.drawRoundRect(tmp, 17 * k, 17 * k, fill);
-            changePaint.setColor(color);
-            c.drawText(changeText[i], tmp.centerX(), mid + Ui.halfCap(changePaint), changePaint);
-        }
+        float x = r.left + 28 * k;
+        float right = r.right - 28 * k;
+        float midX = r.left + r.width() * 0.48f;
+        float x2 = r.left + r.width() * 0.52f;
+
+        // Header
+        c.drawText("Indian Markets", x, r.top + 48 * k, cardTitle);
+        c.drawText("Kolkata Gold", x2, r.top + 48 * k, cardTitle);
+        c.drawText("Live", right, r.top + 48 * k, cardDimRight);
+
+        HomeData.IndianMarket m = data.market;
+
+        Paint labelP = Ui.text(Ui.medium, 20 * k, drawerInk(0.85f));
+        Paint valP = Ui.numbers(Ui.semibold, 20 * k, drawerInk(0.95f));
+        valP.setTextAlign(Paint.Align.RIGHT);
+
+        float rowH = 48 * k;
+        float startY = r.top + 98 * k;
+
+        // Left column: Indian Stocks
+        float y1 = startY;
+        c.drawText("NIFTY 50", x, y1, labelP);
+        c.drawText(m.nifty, midX, y1, valP);
+
+        float y2 = startY + rowH;
+        c.drawText("Tata Motors (CV)", x, y2, labelP);
+        c.drawText(m.tmCv, midX, y2, valP);
+
+        float y3 = startY + rowH * 2;
+        c.drawText("Tata Motors (PV)", x, y3, labelP);
+        c.drawText(m.tmPv, midX, y3, valP);
+
+        float y4 = startY + rowH * 3;
+        c.drawText("Tata Gold ETF", x, y4, labelP);
+        c.drawText(m.tataGold, midX, y4, valP);
+
+        // Right column: Kolkata Gold
+        c.drawText("24K (10g)", x2, y1, labelP);
+        c.drawText(m.gold24k, right, y1, valP);
+
+        c.drawText("24K / gram", x2, y2, labelP);
+        c.drawText(m.gold24kGram, right, y2, valP);
+
+        c.drawText("22K (10g)", x2, y3, labelP);
+        c.drawText(m.gold22k, right, y3, valP);
+
+        c.drawText("22K / gram", x2, y4, labelP);
+        c.drawText(m.gold22kGram, right, y4, valP);
     }
 
     // MARK: - Focus
@@ -2653,8 +2702,30 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Drawer open: the background lightens (by day) or darkens (at night), as a filter on the drawing itself.
         android.graphics.ColorFilter v = veil(tone(0.32f, 0.42f) * Ui.clamp(drawer.value), blend(0xFFFFFFFF, 0xFF000000, night));
         if (bgTo == null || (fading && bgFrom == null)) {
-            if (lightGradient == null) lightGradient = new LinearGradient(0, 0, 0, h, 0xFFF5F5F7, 0xFFE2E2E7, Shader.TileMode.CLAMP);
-            if (nightGradient == null) nightGradient = new LinearGradient(0, 0, 0, h, 0xFF1C1C1E, 0xFF0B0B0D, Shader.TileMode.CLAMP);
+            if (defaultAerial == null) {
+                try (InputStream is = getContext().getAssets().open("apple_aerial.jpg")) {
+                    defaultAerial = BitmapFactory.decodeStream(is);
+                } catch (Exception ignored) {}
+            }
+            if (defaultAerial != null) {
+                imagePaint.setColorFilter(v);
+                drawImage(c, defaultAerial, 1f);
+                imagePaint.setColorFilter(null);
+            } else {
+            if (lightGradient == null) {
+                lightGradient = new android.graphics.RadialGradient(
+                    w * 0.5f, h * 0.28f, Math.max(w, h) * 0.82f,
+                    new int[] { 0xFF181D2B, 0xFF10131E, 0xFF080A10, 0xFF030406 },
+                    new float[] { 0f, 0.35f, 0.72f, 1f },
+                    Shader.TileMode.CLAMP);
+            }
+            if (nightGradient == null) {
+                nightGradient = new android.graphics.RadialGradient(
+                    w * 0.5f, h * 0.25f, Math.max(w, h) * 0.85f,
+                    new int[] { 0xFF141926, 0xFF0C0F18, 0xFF06070C, 0xFF020204 },
+                    new float[] { 0f, 0.35f, 0.72f, 1f },
+                    Shader.TileMode.CLAMP);
+            }
             fill.setColorFilter(v);
             fill.setColor(0xFF000000);
             if (night < 0.999f) {
@@ -2669,6 +2740,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             fill.setShader(null);
             fill.setColorFilter(null);
+            }
         }
         imagePaint.setColorFilter(v);
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
@@ -2685,7 +2757,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         applyTone();
         if (!picksOn()) {
             drawClock(c);
-            if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
         String hello = Ui.tr("For You");

@@ -170,7 +170,21 @@ final class HomeData {
     void refreshIfStale() {
         long now = System.currentTimeMillis();
         // A negative age (the TV's clock went back) counts as stale: otherwise the data would freeze.
-        if (!fetchingPrices && coinCount() > 0 && (now - pricesAt > PRICES_EVERY || now < pricesAt) && !failedRecently(pricesFailedAt, now)) {
+        if (!fetchingPrices && (now - pricesAt > PRICES_EVERY || now < pricesAt) && !failedRecently(pricesFailedAt, now)) {
+            fetchingPrices = true;
+            io.execute(() -> {
+                try {
+                    fetchIndianMarket();
+                    pricesAt = System.currentTimeMillis();
+                    notifyListeners();
+                } catch (Exception e) {
+                    pricesFailedAt = System.currentTimeMillis();
+                } finally {
+                    fetchingPrices = false;
+                }
+            });
+        }
+        if (false && !fetchingPrices && coinCount() > 0 && (now - pricesAt > PRICES_EVERY || now < pricesAt) && !failedRecently(pricesFailedAt, now)) {
             fetchingPrices = true;
             io.execute(() -> {
                 try {
@@ -306,7 +320,7 @@ final class HomeData {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setConnectTimeout(6000);
         c.setReadTimeout(6000);
-        c.setRequestProperty("User-Agent", "FreeMyTV");
+        c.setRequestProperty("User-Agent", "Mozilla/5.0");
         try {
             if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
             try (InputStream in = c.getInputStream()) {
@@ -442,5 +456,51 @@ final class HomeData {
         if (age < every * 2) return "";
         long minutes = age / 60_000;
         return minutes < 60 ? Ui.trf("{n} min ago", "n", minutes) : Ui.trf("{n} h ago", "n", minutes / 60);
+    }
+
+    static final class IndianMarket {
+        String nifty = "22,688";
+        String tmCv = "₹414.25";
+        String tmPv = "₹270.00";
+        String tataGold = "₹13.81";
+        String gold24k = "₹1,44,414";
+        String gold22k = "₹1,32,380";
+        String gold24kGram = "₹14,441";
+        String gold22kGram = "₹13,238";
+    }
+
+    final IndianMarket market = new IndianMarket();
+
+    private void fetchIndianMarket() {
+        String[] tickers = {"%5ENSEI", "TMCV.NS", "TMPV.NS", "TATAGOLD.NS"};
+        for (String t : tickers) {
+            try {
+                String res = get("https://query1.finance.yahoo.com/v8/finance/chart/" + t + "?interval=1d");
+                JSONObject json = new JSONObject(res);
+                JSONObject meta = json.getJSONObject("chart").getJSONArray("result").getJSONObject(0).getJSONObject("meta");
+                double price = meta.optDouble("regularMarketPrice", Double.NaN);
+                if (!Double.isNaN(price) && price > 0) {
+                    if (t.equals("%5ENSEI")) market.nifty = String.format(Locale.ROOT, "%,.0f", price);
+                    else if (t.equals("TMCV.NS")) market.tmCv = String.format(Locale.ROOT, "₹%.2f", price);
+                    else if (t.equals("TMPV.NS")) market.tmPv = String.format(Locale.ROOT, "₹%.2f", price);
+                    else if (t.equals("TATAGOLD.NS")) market.tataGold = String.format(Locale.ROOT, "₹%.2f", price);
+                }
+            } catch (Exception ignored) {}
+        }
+        try {
+            String res = get("https://api.gold-api.com/price/XAU/INR");
+            JSONObject json = new JSONObject(res);
+            double ozPrice = json.optDouble("price", Double.NaN);
+            if (!Double.isNaN(ozPrice) && ozPrice > 0) {
+                double gram24 = (ozPrice / 31.1034768) * 1.176;
+                double ten24 = gram24 * 10.0;
+                double gram22 = gram24 * (22.0 / 24.0);
+                double ten22 = ten24 * (22.0 / 24.0);
+                market.gold24k = String.format(Locale.ROOT, "₹%,.0f", ten24);
+                market.gold22k = String.format(Locale.ROOT, "₹%,.0f", ten22);
+                market.gold24kGram = String.format(Locale.ROOT, "₹%,.0f", gram24);
+                market.gold22kGram = String.format(Locale.ROOT, "₹%,.0f", gram22);
+            }
+        } catch (Exception ignored) {}
     }
 }

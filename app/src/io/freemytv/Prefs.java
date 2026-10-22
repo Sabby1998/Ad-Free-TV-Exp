@@ -90,8 +90,8 @@ final class Prefs {
 
     /** "auto" (dark from sunset to sunrise), "light" or "dark". */
     static String theme() {
-        String v = sp().getString("theme", "auto");
-        return v.equals("light") || v.equals("dark") ? v : "auto";
+        String v = sp().getString("theme", "dark");
+        return v.equals("light") || v.equals("dark") ? v : "dark";
     }
 
     static void setTheme(String v) { put("theme", v); }
